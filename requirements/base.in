@@ -1,8 +1,7 @@
-# Core Django / Framework base
 django==3.2.25
 
 # Django REST Framework / APIs
-djangorestframework==3.15.1
+djangorestframework>=3.14.0,<3.15.0
 
 # Variables de entorno / Settings seguros
 django-environ
@@ -11,10 +10,31 @@ django-environ
 mysqlclient
 
 # JSON Web Tokens (JWT)
-djangorestframework-simplejwt
+djangorestframework-simplejwt<5.3.0
+
+# Manejo de CORS (Permite que el Frontend se conecte a la API)
+django-cors-headers
+
+# Documentación de la API (Swagger/OpenAPI)
+drf-spectacular
 
 # Filtros para DRF / Filtros en APIs
-django-filter
+django-filter<24.0
 
 # Manejo de fechas / zonas horarias
 pytz
+
+# Gestión de Usuarios
+django-allauth<0.60.0
+
+# Carga Variables de Entorno desde .env
+python-dotenv
+
+# Pruebas Automatizadas para Python
+pytest
+
+# Complemento de pytest para Django
+pytest-django
+
+# Archivos Estáticos
+whitenoise
