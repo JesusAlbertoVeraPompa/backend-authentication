@@ -36,45 +36,51 @@ DJANGO_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "corsheaders",
-    "drf_spectacular",
+    "django.contrib.sites",
 ]
 
 THIRD_PARTY_APPS = [
+    "corsheaders",
     "rest_framework",
     "django_filters",
-    #"allauth",
-    #"allauth.account",
-    #"allauth.socialaccount",
-    #"allauth.socialaccount.providers.google",
-    #"allauth.socialaccount.providers.facebook",
+    "drf_spectacular",
+    "rest_framework_simplejwt.token_blacklist",
+    "allauth",
+    "allauth.account",
+    "allauth.socialaccount",
+    "allauth.socialaccount.providers.google",
+    "allauth.socialaccount.providers.facebook",
 ]
 
 LOCAL_APPS = [
-    #"apps.accounts",
-    #"apps.users",
-    #"apps.core",
+    "apps.accounts",
+    "apps.users",
+    "apps.core",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
-#AUTH_USER_MODEL = "accounts.User"
+SITE_ID = 1
+AUTH_USER_MODEL = "accounts.User"
 
 # ========================================================================
 # MIDDLEWARE
 # ========================================================================
 
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "allauth.account.middleware.AccountMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 # ========================================================================
 # URLS
 # ========================================================================
@@ -120,9 +126,7 @@ DATABASES = {
         "PASSWORD": env("MYSQL_PASSWORD"),
         "HOST": env("MYSQL_HOST"),
         "PORT": env("MYSQL_PORT"),
-        "OPTIONS": {
-            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'"
-        },
+        "OPTIONS": {"init_command": "SET sql_mode='STRICT_TRANS_TABLES'"},
         "TEST": {
             "MIRROR": "default",
         },
@@ -132,9 +136,15 @@ DATABASES = {
 # ========================================================================
 # AUTH / PASSWORD VALIDATION / REST_FRAMEWORK
 # ========================================================================
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "allauth.account.auth_backends.AuthenticationBackend",
+]
 
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
+    },
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
@@ -163,7 +173,7 @@ REST_FRAMEWORK = {
 # I18N / TIMEZONE
 # ========================================================================
 LANGUAGE_CODE = "es-es"
-TIME_ZONE = 'America/Bogota'
+TIME_ZONE = "America/Bogota"
 USE_I18N = True
 USE_TZ = True
 
@@ -193,6 +203,7 @@ SIMPLE_JWT = {
 # EMAIL
 # ========================================================================
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+DEFAULT_FROM_EMAIL = "no-reply@test.com"
 EMAIL_HOST = "smtp.gmail.com"
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
@@ -209,3 +220,15 @@ FACEBOOK_APP_ID = env("FACEBOOK_APP_ID")
 FACEBOOK_SECRET = env("FACEBOOK_SECRET")
 
 CORS_ALLOW_ALL_ORIGINS = True
+
+
+# ========================================================================
+# Allauth
+# ========================================================================
+ACCOUNT_EMAIL_REQUIRED = True
+ACCOUNT_USERNAME_REQUIRED = True
+ACCOUNT_AUTHENTICATION_METHOD = "username_email"
+ACCOUNT_EMAIL_VERIFICATION = "optional"
+
+if "test" in sys.argv:
+    REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []
