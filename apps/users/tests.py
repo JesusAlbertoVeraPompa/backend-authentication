@@ -2,6 +2,7 @@
 
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
+from rest_framework import status
 
 User = get_user_model()
 
@@ -41,3 +42,34 @@ class UserCRUDTests(APITestCase):
 
         response = self.client.delete(f"/api/users/{user.id}/")
         self.assertEqual(response.status_code, 204)
+
+class UserAuditTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="test", email="test@email.com", password="123456")
+        self.client.force_authenticate(user=self.user)
+
+    def test_update_my_data_creates_snapshot(self):
+        response = self.client.patch("/api/users/me/", {"username": "nuevo_nombre"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Comprobar snapshot
+        from apps.users.models_deleted import DeletedUser
+        self.assertTrue(DeletedUser.objects.filter(username="test").exists())
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.username, "nuevo_nombre")
+
+    def test_soft_delete_and_restore(self):
+        from apps.users.models_deleted import DeletedUser
+
+        # Soft delete
+        response = self.client.delete("/api/users/me/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(User.objects.filter(id=self.user.id).exists())
+
+        deleted_user = DeletedUser.objects.first()
+        self.assertIsNotNone(deleted_user)
+
+        # Restaurar
+        response = self.client.post("/api/users/restore/", {"email": self.user.email})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(User.objects.filter(email=self.user.email).exists())
