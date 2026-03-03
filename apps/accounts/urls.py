@@ -9,13 +9,17 @@ from .views import (
     SendResetPasswordCodeView,
     ResetPasswordView,
     LogoutView,
+    GoogleLoginView,
 )
 
 urlpatterns = [
     # Registro
     path("register/", RegisterView.as_view(), name="register"),
-    # Login/Logout
+    # Login
     path("login/", LoginView.as_view(), name="login"),
+    # Google Login
+    path('google/', GoogleLoginView.as_view(), name='google_login'),
+    # Logout
     path("logout/", LogoutView.as_view(), name="logout"),
     # Verificación de usuario
     path("send-code/", SendVerificationCodeView.as_view(), name="send-code"),

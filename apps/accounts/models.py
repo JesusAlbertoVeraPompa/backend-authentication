@@ -31,3 +31,8 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.email
+
+    def save(self, *args, **kwargs):
+        if not self.password:
+            self.set_unusable_password()
+        super().save(*args, **kwargs)

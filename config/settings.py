@@ -45,11 +45,15 @@ THIRD_PARTY_APPS = [
     "django_filters",
     "drf_spectacular",
     "rest_framework_simplejwt.token_blacklist",
+    # allauth
     "allauth",
     "allauth.account",
     "allauth.socialaccount",
+    # Providers
     "allauth.socialaccount.providers.google",
-    "allauth.socialaccount.providers.facebook",
+    # REST auth
+    "dj_rest_auth",
+    "dj_rest_auth.registration",
 ]
 
 LOCAL_APPS = [
@@ -151,6 +155,8 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 REST_FRAMEWORK = {
+    "USE_JWT": True,
+    "TOKEN_MODEL": None,
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
@@ -221,6 +227,16 @@ FACEBOOK_SECRET = env("FACEBOOK_SECRET")
 
 CORS_ALLOW_ALL_ORIGINS = True
 
+SOCIALACCOUNT_PROVIDERS = {
+    "google": {
+        "APP": {
+            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+            "secret": os.getenv("GOOGLE_SECRET"),
+            "key": "",
+        },
+        "SCOPE": ["profile", "email"],
+    },
+}
 
 # ========================================================================
 # Allauth

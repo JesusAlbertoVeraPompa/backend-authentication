@@ -3,7 +3,6 @@
 from rest_framework import serializers
 from .models import User
 
-
 class RegisterSerializer(serializers.ModelSerializer):
     """
     Serializador para registro de usuarios.

@@ -1,23 +1,30 @@
-from rest_framework import generics, status
-from django.contrib.auth import authenticate, get_user_model
-from rest_framework_simplejwt.tokens import RefreshToken
-from django.core.mail import send_mail
-from rest_framework.permissions import AllowAny
+# apps/accounts/views.py
 
+from rest_framework import generics, status
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth import authenticate, get_user_model
+from django.conf import settings
+from django.core.mail import send_mail
+from django.db import transaction
+import requests
+import logging
+
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
 
 from .serializers import RegisterSerializer
 from apps.core.generators import generate_verification_code
 from apps.core.utils.responses import success_response, error_response
 
-from django.db import transaction
-from django.conf import settings
-import logging
-
 logger = logging.getLogger(__name__)
-
 User = get_user_model()
+
+
+# ==============================
+# Register
+# ==============================
 
 
 class RegisterView(generics.GenericAPIView):
@@ -69,6 +76,11 @@ class RegisterView(generics.GenericAPIView):
             },
             status_code=status.HTTP_201_CREATED,
         )
+
+
+# ==============================
+# Login
+# ==============================
 
 
 class LoginView(generics.GenericAPIView):
@@ -130,6 +142,11 @@ class LoginView(generics.GenericAPIView):
         )
 
 
+# ==============================
+# Send Verify Code
+# ==============================
+
+
 class SendVerificationCodeView(generics.GenericAPIView):
     """
     Envía código de verificación al email
@@ -174,6 +191,11 @@ class SendVerificationCodeView(generics.GenericAPIView):
         )
 
 
+# ==============================
+# Verify Code
+# ==============================
+
+
 class VerifyCodeView(generics.GenericAPIView):
     """
     Verifica el código enviado al correo
@@ -209,6 +231,11 @@ class VerifyCodeView(generics.GenericAPIView):
             message="Usuario verificado correctamente",
             status_code=status.HTTP_200_OK,
         )
+
+
+# ==============================
+# Send Code Reset Password
+# ==============================
 
 
 class SendResetPasswordCodeView(generics.GenericAPIView):
@@ -253,6 +280,11 @@ class SendResetPasswordCodeView(generics.GenericAPIView):
         )
 
 
+# ==============================
+# Reset Password
+# ==============================
+
+
 class ResetPasswordView(generics.GenericAPIView):
     """
     Restablecer contraseña con código
@@ -291,10 +323,17 @@ class ResetPasswordView(generics.GenericAPIView):
             status_code=status.HTTP_200_OK,
         )
 
+
+# ==============================
+# Logout
+# ==============================
+
+
 class LogoutView(APIView):
     """
     Cierra sesión invalidando el refresh token (blacklist)
     """
+
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -317,5 +356,66 @@ class LogoutView(APIView):
 
         return success_response(
             message="Sesión cerrada correctamente",
+            status_code=status.HTTP_200_OK,
+        )
+
+
+# ==============================
+# LOGIN CON GOOGLE (MODERNO)
+# ==============================
+
+
+class GoogleLoginView(APIView):
+    """
+    Login usando id_token de Google Identity Services
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        id_token_value = request.data.get("id_token")
+
+        if not id_token_value:
+            return error_response(
+                "Se requiere id_token",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            idinfo = id_token.verify_oauth2_token(
+                id_token_value,
+                google_requests.Request(),
+                settings.GOOGLE_CLIENT_ID,
+                clock_skew_in_seconds=10,
+            )
+
+            email = idinfo["email"]
+            name = idinfo.get("name", "")
+        except Exception as e:
+            return error_response(
+                f"Token inválido: {str(e)}",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                "username": email.split("@")[0],
+                "is_verified": True,
+            },
+        )
+
+        if created:
+            user.set_unusable_password()
+            user.save()
+
+        refresh = RefreshToken.for_user(user)
+
+        return success_response(
+            message="Login con Google exitoso",
+            data={
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+            },
             status_code=status.HTTP_200_OK,
         )
