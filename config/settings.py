@@ -26,6 +26,17 @@ SECRET_KEY = env("SECRET_KEY")
 DEBUG = env("DEBUG")
 ALLOWED_HOSTS = env("ALLOWED_HOSTS").split(",")
 
+# ==============================
+# CORS SEGURO
+# ==============================
+
+CORS_ALLOW_ALL_ORIGINS = False
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "https://tudominio.com",
+]
+
 # ========================================================================
 # APPLICATIONS
 # ========================================================================
@@ -160,7 +171,7 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
-    "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+    "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.AllowAny",),
     "EXCEPTION_HANDLER": "config.exceptions.custom_exception_handler",
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",
@@ -198,7 +209,7 @@ MEDIA_ROOT = BASE_DIR / "media"
 # ========================================================================
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(days=1),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
@@ -220,23 +231,17 @@ EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD")
 # ========================================================================
 # AUTH - GOOGLE FACEBOOK
 # ========================================================================
-GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID")
-GOOGLE_SECRET = env("GOOGLE_SECRET")
-FACEBOOK_APP_ID = env("FACEBOOK_APP_ID")
-FACEBOOK_SECRET = env("FACEBOOK_SECRET")
-
-CORS_ALLOW_ALL_ORIGINS = True
-
 SOCIALACCOUNT_PROVIDERS = {
     "google": {
         "APP": {
-            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
-            "secret": os.getenv("GOOGLE_SECRET"),
+            "client_id": env("GOOGLE_CLIENT_ID"),
+            "secret": env("GOOGLE_SECRET"),
             "key": "",
         },
         "SCOPE": ["profile", "email"],
     },
 }
+
 
 # ========================================================================
 # Allauth
@@ -248,3 +253,32 @@ ACCOUNT_EMAIL_VERIFICATION = "optional"
 
 if "test" in sys.argv:
     REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []
+
+
+LOGGING = {
+    'version': 1,
+    'handlers': {
+        'file': {
+            'class': 'logging.FileHandler',
+            'filename': 'security.log',
+        },
+    },
+    'loggers': {
+        'security': {
+            'handlers': ['file'],
+            'level': 'INFO',
+        },
+    },
+}
+
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True

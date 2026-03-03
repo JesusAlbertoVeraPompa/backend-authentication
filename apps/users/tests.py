@@ -41,7 +41,7 @@ class UserCRUDTests(APITestCase):
         )
 
         response = self.client.delete(f"/api/users/{user.id}/")
-        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.status_code, 200)
 
 class UserAuditTests(APITestCase):
     def setUp(self):

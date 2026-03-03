@@ -1,6 +1,9 @@
 # apps/core/middleware.py
 
 from django.http import JsonResponse
+import logging
+
+logger = logging.getLogger("security")
 
 class RoleRequiredMiddleware:
     """
@@ -21,3 +24,17 @@ class RoleRequiredMiddleware:
                 return JsonResponse({"error": "Acceso denegado"}, status=403)
 
         return self.get_response(request)
+
+class AuditMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+
+        if request.user.is_authenticated:
+            logger.info(
+                f"User: {request.user.email} - Path: {request.path} - Method: {request.method}"
+            )
+
+        return response

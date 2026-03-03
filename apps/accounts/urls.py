@@ -2,31 +2,52 @@
 
 from django.urls import path
 from .views import (
-    RegisterView,
-    LoginView,
-    SendVerificationCodeView,
-    VerifyCodeView,
-    SendResetPasswordCodeView,
-    ResetPasswordView,
     LogoutView,
+    RegisterView,
+    CustomTokenObtainPairView,
+    SendCodeView,
+    VerifyEmailView,
+    RequestPasswordResetView,
+    ConfirmPasswordResetView,
     GoogleLoginView,
 )
 
 urlpatterns = [
-    # Registro
+    # -------------------------
+    # REGISTRO
+    # -------------------------
     path("register/", RegisterView.as_view(), name="register"),
-    # Login
-    path("login/", LoginView.as_view(), name="login"),
-    # Google Login
-    path('google/', GoogleLoginView.as_view(), name='google_login'),
-    # Logout
+    # -------------------------
+    # LOGIN JWT
+    # -------------------------
+    path("login/", CustomTokenObtainPairView.as_view(), name="login"),
+    # -------------------------
+    # LOGIN CON GOOGLE
+    # -------------------------
+    path("google/", GoogleLoginView.as_view(), name="google_login"),
+    # -------------------------
+    # LOGOUT
+    # -------------------------
     path("logout/", LogoutView.as_view(), name="logout"),
-    # Verificación de usuario
-    path("send-code/", SendVerificationCodeView.as_view(), name="send-code"),
-    path("verify-code/", VerifyCodeView.as_view(), name="verify-code"),
-    # Recuperación de contraseña
+    # -------------------------
+    # ENVIO DE CODIGO
+    # -------------------------
+    path("send-code/", SendCodeView.as_view(), name="send-code"),
+    # -------------------------
+    # VERIFICACIÓN DE EMAIL
+    # -------------------------
+    path("verify-code/", VerifyEmailView.as_view(), name="verify-code"),
+    # -------------------------
+    # RECUPERACIÓN DE PASSWORD
+    # -------------------------
     path(
-        "send-reset-code/", SendResetPasswordCodeView.as_view(), name="send-reset-code"
+        "send-reset-code/",
+        RequestPasswordResetView.as_view(),
+        name="send-reset-code",
     ),
-    path("reset-password/", ResetPasswordView.as_view(), name="reset-password"),
+    path(
+        "reset-password/",
+        ConfirmPasswordResetView.as_view(),
+        name="reset-password",
+    ),
 ]

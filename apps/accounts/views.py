@@ -1,208 +1,156 @@
-# apps/accounts/views.py
-
-from rest_framework import generics, status
-from rest_framework.views import APIView
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth import authenticate, get_user_model
+import random
+from django.utils import timezone
+from django.contrib.auth.hashers import make_password, check_password
+from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.conf import settings
 from django.core.mail import send_mail
-from django.db import transaction
-import requests
-import logging
 
+# Rest Framework
+from rest_framework.views import APIView
+from rest_framework import status, serializers
+from rest_framework.permissions import IsAuthenticated
+
+# JWT
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+
+# Google Auth
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 
-from .serializers import RegisterSerializer
-from apps.core.generators import generate_verification_code
+# Importación de tus respuestas personalizadas
 from apps.core.utils.responses import success_response, error_response
+from .throttles import LoginThrottle
 
-logger = logging.getLogger(__name__)
 User = get_user_model()
 
-
-# ==============================
-# Register
-# ==============================
-
-
-class RegisterView(generics.GenericAPIView):
-    """
-    Registro de nuevos usuarios
-    - Crea el usuario
-    - Envía código de verificación al correo
-    """
-
-    serializer_class = RegisterSerializer
-    permission_classes = [AllowAny]
-
-    def post(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-
-        if not serializer.is_valid():
-            return error_response(
-                message="Error en el registro",
-                errors=serializer.errors,
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        with transaction.atomic():
-            user = serializer.save()
-
-            # Generar código de verificación
-            code = generate_verification_code()
-            user.verification_code = str(code)
-            user.save()
-
-            # Enviar correo
-            try:
-                send_mail(
-                    "Código de verificación",
-                    f"Tu código de verificación es: {code}",
-                    settings.DEFAULT_FROM_EMAIL,
-                    [user.email],
-                    fail_silently=False,
-                )
-            except Exception as e:
-                logger.error(f"Error enviando email de verificación: {str(e)}")
-
-        return success_response(
-            message="Usuario registrado correctamente. Revisa tu correo para verificar la cuenta.",
-            data={
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-            },
-            status_code=status.HTTP_201_CREATED,
-        )
+# =====================================================
+# FUNCIÓN AUXILIAR PARA GENERAR CÓDIGOS NUMÉRICOS
+# =====================================================
 
 
-# ==============================
-# Login
-# ==============================
+def generate_numeric_code(length=6):
+    """Genera un código de N dígitos para verificaciones"""
+    return "".join(str(random.randint(0, 9)) for _ in range(length))
 
 
-class LoginView(generics.GenericAPIView):
-    """
-    Login con JWT
-    - Valida email y contraseña
-    - Verifica que el usuario haya confirmado su correo
-    - Devuelve access y refresh tokens
-    """
+# =====================================================
+# REGISTRO DE USUARIO
+# =====================================================
 
-    permission_classes = [AllowAny]
 
+class RegisterView(APIView):
+    """Maneja la creación de nuevos usuarios y envío de código inicial"""
+
+    @transaction.atomic  # Asegura que si algo falla, no se cree el usuario a medias
     def post(self, request):
         email = request.data.get("email")
         password = request.data.get("password")
 
-        # Validar campos obligatorios
+        # Validación de campos obligatorios
         if not email or not password:
             return error_response(
-                "Email y contraseña son obligatorios",
+                "Email y password son requeridos",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Buscar usuario por email
+        # Verificar si el usuario ya existe para evitar duplicados
+        if User.objects.filter(email=email).exists():
+            return error_response(
+                "El usuario ya existe", status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Crear el usuario
+        user = User.objects.create_user(username=email, email=email, password=password)
+
+        # Generar código de verificación aleatorio
+        raw_code = generate_numeric_code()
+
+        # Guardar el hash del código (por seguridad) y la fecha de creación
+        user.verification_code = make_password(raw_code)
+        user.verification_code_created_at = timezone.now()
+        user.save()
+
+        # Envío real de correo electrónico
         try:
-            user_obj = User.objects.get(email=email)
-        except User.DoesNotExist:
-            return error_response(
-                "Credenciales inválidas",
-                status_code=status.HTTP_400_BAD_REQUEST,
+            send_mail(
+                subject="Verifica tu cuenta",
+                message=f"Tu código de verificación es: {raw_code}",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                fail_silently=False,
             )
-
-        # Autenticar usuario
-        user = authenticate(username=user_obj.username, password=password)
-
-        if not user:
-            return error_response(
-                "Credenciales inválidas",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Verificar si el correo fue confirmado
-        if not user.is_verified:
-            return error_response(
-                "Debes verificar tu correo antes de iniciar sesión",
-                status_code=status.HTTP_403_FORBIDDEN,
-            )
-
-        # Generar tokens JWT
-        refresh = RefreshToken.for_user(user)
+        except Exception as e:
+            # Si falla el envío de correo, podrías imprimir el error para debug
+            print(f"Error enviando correo: {str(e)}")
+            # Opcionalmente devolver un error si el correo es crítico
+            # return error_response("Error al enviar el email de verificación", 500)
 
         return success_response(
-            message="Inicio de sesión exitoso",
-            data={
-                "access": str(refresh.access_token),
-                "refresh": str(refresh),
-            },
-            status_code=status.HTTP_200_OK,
+            message="Usuario creado. Revisa tu email para verificar.",
+            status_code=status.HTTP_201_CREATED,
         )
 
 
-# ==============================
-# Send Verify Code
-# ==============================
+# =====================================================
+# ENVIO DE CODIGO DE VERIFICACIÓN
+# =====================================================
 
 
-class SendVerificationCodeView(generics.GenericAPIView):
-    """
-    Envía código de verificación al email
-    - Reenvío de código si el usuario no lo recibió
-    """
-
-    permission_classes = [AllowAny]
+class SendCodeView(APIView):
+    """Permite al usuario solicitar un nuevo código si el anterior expiró"""
 
     def post(self, request):
         email = request.data.get("email")
 
         if not email:
             return error_response(
-                "El email es obligatorio",
-                status_code=status.HTTP_400_BAD_REQUEST,
+                "Email requerido", status_code=status.HTTP_400_BAD_REQUEST
             )
 
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
             return error_response(
-                "Usuario no encontrado",
-                status_code=status.HTTP_404_NOT_FOUND,
+                "Usuario no encontrado", status_code=status.HTTP_404_NOT_FOUND
             )
 
-        # Generar nuevo código
-        code = generate_verification_code()
-        user.verification_code = str(code)
+        # Generar y hashear nuevo código
+        raw_code = generate_numeric_code()
+        user.verification_code = make_password(raw_code)
+        user.verification_code_created_at = timezone.now()
         user.save()
 
-        # Enviar correo
-        send_mail(
-            "Código de verificación",
-            f"Tu código de verificación es: {code}",
-            None,
-            [email],
-        )
+        # Envío real de correo electrónico
+        try:
+            send_mail(
+                subject="Verifica tu cuenta",
+                message=f"Tu código de verificación es: {raw_code}",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                fail_silently=False,
+            )
+        except Exception as e:
+            # Si falla el envío de correo, podrías imprimir el error para debug
+            print(f"Error enviando correo: {str(e)}")
+            # Opcionalmente devolver un error si el correo es crítico
+            # return error_response("Error al enviar el email de verificación", 500)
 
         return success_response(
-            message="Código de verificación enviado al correo",
+            message="Código enviado exitosamente.",
             status_code=status.HTTP_200_OK,
         )
 
 
-# ==============================
-# Verify Code
-# ==============================
+# =====================================================
+# VERIFICAR EMAIL
+# =====================================================
 
 
-class VerifyCodeView(generics.GenericAPIView):
-    """
-    Verifica el código enviado al correo
-    - Activa el usuario (is_verified=True)
-    """
-
-    permission_classes = [AllowAny]
+class VerifyEmailView(APIView):
+    """Compara el código ingresado por el usuario con el guardado en BD"""
 
     def post(self, request):
         email = request.data.get("email")
@@ -210,89 +158,89 @@ class VerifyCodeView(generics.GenericAPIView):
 
         if not email or not code:
             return error_response(
-                "Email y código son obligatorios",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            user = User.objects.get(email=email, verification_code=code)
-        except User.DoesNotExist:
-            return error_response(
-                "Código inválido",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Activar usuario
-        user.is_verified = True
-        user.verification_code = None
-        user.save()
-
-        return success_response(
-            message="Usuario verificado correctamente",
-            status_code=status.HTTP_200_OK,
-        )
-
-
-# ==============================
-# Send Code Reset Password
-# ==============================
-
-
-class SendResetPasswordCodeView(generics.GenericAPIView):
-    """
-    Envía código para recuperación de contraseña
-    """
-
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        email = request.data.get("email")
-
-        if not email:
-            return error_response(
-                "El email es obligatorio",
-                status_code=status.HTTP_400_BAD_REQUEST,
+                "Email y código son requeridos", status_code=status.HTTP_400_BAD_REQUEST
             )
 
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
             return error_response(
-                "Usuario no encontrado",
-                status_code=status.HTTP_404_NOT_FOUND,
+                "Usuario no encontrado", status_code=status.HTTP_404_NOT_FOUND
             )
 
-        # Generar código de recuperación
-        code = generate_verification_code()
-        user.reset_code = str(code)
+        # Validar si el código ha expirado (usando el método del modelo)
+        if user.verification_code_is_expired():
+            return error_response(
+                "El código expiró", status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validar si el código es correcto comparando el hash
+        if not check_password(code, user.verification_code):
+            return error_response(
+                "Código inválido", status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Activar usuario y limpiar campos de verificación
+        user.is_verified = True
+        user.verification_code = None
+        user.verification_code_created_at = None
         user.save()
 
-        send_mail(
-            "Recuperación de contraseña",
-            f"Tu código para restablecer contraseña es: {code}",
-            None,
-            [email],
-        )
-
         return success_response(
-            message="Código de recuperación enviado al correo",
+            message="Email verificado correctamente.",
             status_code=status.HTTP_200_OK,
         )
 
+# =====================================================
+# SOLICITAR RESET DE PASSWORD
+# =====================================================
 
-# ==============================
-# Reset Password
-# ==============================
+
+class RequestPasswordResetView(APIView):
+    """Genera un código de recuperación para usuarios que olvidaron su clave"""
+
+    def post(self, request):
+        email = request.data.get("email")
+
+        if not email:
+            return error_response(
+                "Email requerido", status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(email=email)
+            # Si existe, generamos el código
+            raw_code = generate_numeric_code()
+            user.reset_code = make_password(raw_code)
+            user.reset_code_created_at = timezone.now()
+            user.save()
+            # ENVÍO REAL DE CORREO DE RECUPERACIÓN
+            try:
+                send_mail(
+                    subject="Recuperación de contraseña",
+                    message=f"Tu código para restablecer tu contraseña es: {raw_code}. Si no solicitaste este cambio, ignora este correo.",
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[email],
+                    fail_silently=False,
+                )
+            except Exception as e:
+                print(f"Error enviando correo de reset: {str(e)}")
+        except User.DoesNotExist:
+            # Por seguridad, no decimos si el email existe o no
+            pass
+
+        return success_response(
+            message="Si el usuario existe, se enviará un código de recuperación.",
+            status_code=status.HTTP_200_OK,
+        )
+
+# =====================================================
+# CONFIRMAR RESET DE PASSWORD
+# =====================================================
 
 
-class ResetPasswordView(generics.GenericAPIView):
-    """
-    Restablecer contraseña con código
-    - Valida código
-    - Actualiza la contraseña
-    """
-
-    permission_classes = [AllowAny]
+class ConfirmPasswordResetView(APIView):
+    """Procesa el cambio de contraseña tras validar el código de recuperación"""
 
     def post(self, request):
         email = request.data.get("email")
@@ -301,121 +249,173 @@ class ResetPasswordView(generics.GenericAPIView):
 
         if not email or not code or not new_password:
             return error_response(
-                "Email, código y nueva contraseña son obligatorios",
-                status_code=status.HTTP_400_BAD_REQUEST,
+                "Datos incompletos", status_code=status.HTTP_400_BAD_REQUEST
             )
 
         try:
-            user = User.objects.get(email=email, reset_code=code)
+            user = User.objects.get(email=email)
         except User.DoesNotExist:
             return error_response(
-                "Código inválido",
-                status_code=status.HTTP_400_BAD_REQUEST,
+                "Usuario no encontrado", status_code=status.HTTP_404_NOT_FOUND
             )
 
-        # Cambiar contraseña
+        # Verificación de expiración y validez del código de reset
+        if user.reset_code_is_expired():
+            return error_response(
+                "El código expiró", status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not check_password(code, user.reset_code):
+            return error_response(
+                "Código inválido", status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Cambiar contraseña y limpiar códigos
         user.set_password(new_password)
         user.reset_code = None
+        user.reset_code_created_at = None
         user.save()
 
         return success_response(
-            message="Contraseña actualizada correctamente",
-            status_code=status.HTTP_200_OK,
+                message="Contraseña actualizada correctamente.",
+                status_code=status.HTTP_200_OK,
+            )
+
+
+
+# =====================================================
+# LOGIN CON GOOGLE
+# =====================================================
+
+
+class GoogleLoginView(APIView):
+    """Autenticación mediante Google OAuth2"""
+
+    def post(self, request):
+        token = request.data.get("id_token")
+
+        if not token:
+            return error_response(
+                "id_token es requerido", status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Validar el token directamente con los servidores de Google
+            idinfo = id_token.verify_oauth2_token(
+                token,
+                google_requests.Request(),
+                settings.SOCIALACCOUNT_PROVIDERS["google"]["APP"]["client_id"],
+            )
+
+            # Validar el emisor del token
+            if idinfo["iss"] not in [
+                "accounts.google.com",
+                "https://accounts.google.com",
+            ]:
+                raise ValueError("Issuer inválido")
+
+            email = idinfo.get("email")
+            if not email:
+                return error_response(
+                    "Google no retornó email", status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Obtener usuario o crearlo si es nuevo
+            user, created = User.objects.get_or_create(
+                email=email,
+                defaults={
+                    "username": email,
+                    "is_verified": True,  # Si viene de Google, ya está verificado
+                },
+            )
+
+            # Forzar verificación si ya existía pero no estaba verificado
+            if not user.is_verified:
+                user.is_verified = True
+                user.save()
+
+            # Generar tokens JWT para nuestra app
+            refresh = RefreshToken.for_user(user)
+            data = {
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+            }
+            return success_response("Login exitoso", data=data)
+
+        except ValueError as e:
+            print(f"Error detallado de Google: {str(e)}")
+            return error_response(
+                "Token de Google inválido", status_code=status.HTTP_400_BAD_REQUEST
+            )
+        # AGREGA ESTE BLOQUE JUSTO DEBAJO:
+        except Exception as e:
+            print(f"--- ERROR CRÍTICO EN GOOGLE LOGIN ---")
+            print(f"Tipo de error: {type(e).__name__}")
+            print(f"Mensaje: {str(e)}")
+            return error_response(
+                f"Error interno: {str(e)}",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+# =====================================================
+# LOGIN TRADICIONAL (JWT)
+# =====================================================
+
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """Serializador que añade una validación extra: El usuario debe estar verificado"""
+
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        if not self.user.is_verified:
+            raise serializers.ValidationError(
+                "Debes verificar tu email antes de iniciar sesión."
+            )
+        return data
+
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    """Vista de Login que usa el serializador personalizado y aplica Throttling"""
+
+    serializer_class = CustomTokenObtainPairSerializer
+    throttle_classes = [LoginThrottle]
+
+    def post(self, request, *args, **kwargs):
+        # El método super().post realiza la autenticación estándar
+        response = super().post(request, *args, **kwargs)
+
+        # Adaptamos la respuesta al formato unificado
+        return success_response(
+            message="Login exitoso",
+            data={
+                "access": response.data["access"],
+                "refresh": response.data["refresh"],
+            },
         )
 
 
-# ==============================
-# Logout
-# ==============================
+# =====================================================
+# LOGOUT
+# =====================================================
 
 
 class LogoutView(APIView):
-    """
-    Cierra sesión invalidando el refresh token (blacklist)
-    """
+    """Invalida el refresh token del usuario (Blacklist)"""
 
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        refresh_token = request.data.get("refresh")
-
-        if not refresh_token:
-            return error_response(
-                "Refresh token es obligatorio",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
         try:
+            refresh_token = request.data.get("refresh")
+            if not refresh_token:
+                return error_response("Refresh token es requerido")
+
             token = RefreshToken(refresh_token)
-            token.blacklist()
+            token.blacklist()  # Agrega el token a la lista negra
+
+            return success_response("Logout exitoso")
         except Exception:
             return error_response(
-                "Token inválido o ya fue invalidado",
-                status_code=status.HTTP_400_BAD_REQUEST,
+                "Token inválido o ya expirado", status_code=status.HTTP_400_BAD_REQUEST
             )
-
-        return success_response(
-            message="Sesión cerrada correctamente",
-            status_code=status.HTTP_200_OK,
-        )
-
-
-# ==============================
-# LOGIN CON GOOGLE (MODERNO)
-# ==============================
-
-
-class GoogleLoginView(APIView):
-    """
-    Login usando id_token de Google Identity Services
-    """
-
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        id_token_value = request.data.get("id_token")
-
-        if not id_token_value:
-            return error_response(
-                "Se requiere id_token",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            idinfo = id_token.verify_oauth2_token(
-                id_token_value,
-                google_requests.Request(),
-                settings.GOOGLE_CLIENT_ID,
-                clock_skew_in_seconds=10,
-            )
-
-            email = idinfo["email"]
-            name = idinfo.get("name", "")
-        except Exception as e:
-            return error_response(
-                f"Token inválido: {str(e)}",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        user, created = User.objects.get_or_create(
-            email=email,
-            defaults={
-                "username": email.split("@")[0],
-                "is_verified": True,
-            },
-        )
-
-        if created:
-            user.set_unusable_password()
-            user.save()
-
-        refresh = RefreshToken.for_user(user)
-
-        return success_response(
-            message="Login con Google exitoso",
-            data={
-                "access": str(refresh.access_token),
-                "refresh": str(refresh),
-            },
-            status_code=status.HTTP_200_OK,
-        )
